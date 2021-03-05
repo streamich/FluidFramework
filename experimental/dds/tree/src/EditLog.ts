@@ -95,7 +95,7 @@ interface SerializationHelpers {
 	/** JSON serializes a handle that corresponds to an uploaded edit chunk. */
 	serializeHandle: (handle: EditHandle) => ISerializedHandle;
 
-	/** Deserializes a JSON serialized handle into a fluid handle that can be used to retrieve uploaded blobs.  */
+	/** Deserializes a JSON serialized handle into an IFluidHandle that can be used to retrieve uploaded blobs.  */
 	deserializeHandle: (serializedHandle: ISerializedHandle) => EditHandle;
 }
 
@@ -152,14 +152,6 @@ const loadedChunkCacheSize = Number.POSITIVE_INFINITY;
  * @param isLocal - true iff this edit was generated locally
  */
 export type EditAddedHandler = (edit: Edit, isLocal: boolean, wasLocal: boolean) => void;
-
-/**
- * Event fired when an edit is added to an `EditLog`.
- * @param edit - The edit that was added to the log
- * @param isLocal - true iff this edit was generated locally
- * @internal
- */
-export type EditAddedHandler = (edit: Edit, isLocal: boolean) => void;
 
 /**
  * The edit history log for SharedTree.

@@ -6,7 +6,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { expect } from 'chai';
 import { DataObject } from '@fluidframework/aqueduct';
-import { Container } from '@fluidframework/container-loader';
+import { Container, Loader } from '@fluidframework/container-loader';
 import { requestFluidObject } from '@fluidframework/runtime-utils';
 import {
 	MockContainerRuntimeFactory,
@@ -191,7 +191,7 @@ export async function setUpLocalServerTestSharedTree(
 ): Promise<LocalServerSharedTreeTestingComponents> {
 	const { id, initialTree, testObjectProvider, setupEditId, summarizer } = options;
 
-	const treeId = id || 'test';
+	const treeId = id ?? 'test';
 	const registry: ChannelFactoryRegistry = [[treeId, SharedTree.getFactory()]];
 	const runtimeFactory = (containerOptions?: ITestContainerConfig) =>
 		new TestContainerRuntimeFactory(TestDataObject.type, new TestFluidObjectFactory(registry), {
@@ -206,7 +206,7 @@ export async function setUpLocalServerTestSharedTree(
 		container = await provider.loadTestContainer();
 	} else {
 		const driver = new LocalServerTestDriver();
-		provider = new TestObjectProvider(driver, runtimeFactory);
+		provider = new TestObjectProvider(Loader, driver, runtimeFactory);
 		container = (await provider.makeTestContainer()) as Container;
 	}
 
