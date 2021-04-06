@@ -19,6 +19,7 @@ import {
 	TestContainerRuntimeFactory,
 	TestFluidObjectFactory,
 } from '@fluidframework/test-utils';
+import { createFluidTestDriver } from '@fluidframework/test-drivers';
 import { ITelemetryBaseLogger } from '@fluidframework/common-definitions';
 import { IContainer } from '@fluidframework/container-definitions';
 import { Loader } from '@fluidframework/container-loader';
@@ -193,7 +194,7 @@ export async function setUpLocalServerTestSharedTree(
 	const registry: ChannelFactoryRegistry = [[treeId, SharedTree.getFactory()]];
 	const runtimeFactory = (containerOptions?: ITestContainerConfig) =>
 		new TestContainerRuntimeFactory(TestDataObject.type, new TestFluidObjectFactory(registry), {
-			initialSummarizerDelayMs: 0,
+			summaryOptions: { initialSummarizerDelayMs: 0 },
 		});
 
 	let provider: TestObjectProvider;
@@ -203,7 +204,7 @@ export async function setUpLocalServerTestSharedTree(
 		provider = localTestObjectProvider;
 		container = await provider.loadTestContainer();
 	} else {
-		provider = new TestObjectProvider(Loader, getFluidTestDriver(), runtimeFactory);
+		provider = new TestObjectProvider(Loader, await createFluidTestDriver(), runtimeFactory);
 		container = await provider.makeTestContainer();
 	}
 

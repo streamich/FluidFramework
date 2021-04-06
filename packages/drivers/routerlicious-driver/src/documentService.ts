@@ -40,6 +40,8 @@ export class DocumentService implements api.IDocumentService {
 
     private documentStorageService: DocumentStorageService | undefined;
 
+    public dispose() {}
+
     /**
      * Connects to a storage endpoint for snapshot service.
      *
@@ -84,7 +86,7 @@ export class DocumentService implements api.IDocumentService {
             }
         }
 
-        this.documentStorageService = new DocumentStorageService(this.documentId, gitManager);
+        this.documentStorageService = new DocumentStorageService(this.documentId, gitManager, this.logger);
         return this.documentStorageService;
     }
 
@@ -94,7 +96,7 @@ export class DocumentService implements api.IDocumentService {
      * @returns returns the document delta storage service for routerlicious driver.
      */
     public async connectToDeltaStorage(): Promise<api.IDocumentDeltaStorageService> {
-        assert(!!this.documentStorageService, "Storage service not initialized");
+        assert(!!this.documentStorageService, 0x0b1 /* "Storage service not initialized" */);
 
         const deltaStorage = new DeltaStorageService(this.deltaStorageUrl, this.tokenProvider, this.logger);
         return new DocumentDeltaStorageService(this.tenantId, this.documentId,

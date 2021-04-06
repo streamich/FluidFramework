@@ -9,9 +9,9 @@ import { v4 as uuid } from "uuid";
 import {
     assert,
     fromBase64ToUtf8,
-    IsoBuffer,
     performance,
     stringToBuffer,
+    bufferToString,
 } from "@fluidframework/common-utils";
 import {
     PerformanceEvent,
@@ -38,11 +38,8 @@ import { fetchSnapshot } from "./fetchSnapshot";
 import { getUrlAndHeadersWithAuth } from "./getUrlAndHeadersWithAuth";
 import {
     IOdspCache,
-    ICacheEntry,
-    IFileEntry,
-    snapshotExpirySummarizerOps,
-    IPersistedCacheValueWithEpoch,
-    persistedCacheValueVersion,
+    IEntry,
+    snapshotKey,
 } from "./odspCache";
 import { getWithRetryForTokenRefresh, IOdspResponse } from "./odspUtils";
 import { TokenFetchOptions } from "./tokenFetch";
@@ -50,6 +47,11 @@ import { EpochTracker } from "./epochTracker";
 import { OdspSummaryUploadManager } from "./odspSummaryUploadManager";
 
 /* eslint-disable max-len */
+
+interface ISnapshotCacheValue {
+    snapshot: IOdspSnapshot;
+    sequenceNumber: number | undefined;
+}
 
 /**
  * Build a tree hierarchy base on a flat tree
@@ -131,7 +133,7 @@ class BlobCache {
     public addBlobs(blobs: IBlob[]) {
         blobs.forEach((blob) => {
             assert(blob.encoding === "base64" || blob.encoding === undefined,
-                `Unexpected blob encoding type: '${blob.encoding}'`);
+                0x0a4 /* `Unexpected blob encoding type: '${blob.encoding}'` */);
             this._blobCache.set(blob.id, blob);
         });
         // Reset the timer on cache set
@@ -226,9 +228,8 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
     private _ops: ISequencedDeltaOpMessage[] | undefined;
 
     private firstVersionCall = true;
-    private _snapshotCacheEntry: ICacheEntry | undefined;
-
-    private readonly fileEntry: IFileEntry;
+    private readonly _snapshotCacheEntry: IEntry;
+    private _snapshotSequenceNumber: number | undefined;
 
     private readonly documentId: string;
     private readonly snapshotUrl: string | undefined;
@@ -247,8 +248,8 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
     private readonly blobCache = new BlobCache();
 
     public set ops(ops: ISequencedDeltaOpMessage[] | undefined) {
-        assert(this._ops === undefined, "Trying to set ops when they are already set!");
-        assert(ops !== undefined, "Input ops are undefined!");
+        assert(this._ops === undefined, 0x0a5 /* "Trying to set ops when they are already set!" */);
+        assert(ops !== undefined, 0x0a6 /* "Input ops are undefined!" */);
         this._ops = ops;
     }
 
@@ -256,8 +257,8 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
         return this._ops;
     }
 
-    public get snapshotCacheEntry() {
-        return this._snapshotCacheEntry;
+    public get snapshotSequenceNumber() {
+        return this._snapshotSequenceNumber;
     }
 
     constructor(
@@ -275,9 +276,9 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
         this.attachmentPOSTUrl = odspResolvedUrl.endpoints.attachmentPOSTStorageUrl;
         this.attachmentGETUrl = odspResolvedUrl.endpoints.attachmentGETStorageUrl;
 
-        this.fileEntry = {
-            resolvedUrl: odspResolvedUrl,
-            docId: this.documentId,
+        this._snapshotCacheEntry = {
+            type: snapshotKey,
+            key: "",
         };
 
         this.odspSummaryUploadManager = new OdspSummaryUploadManager(this.snapshotUrl, getStorageToken, logger, epochTracker, this.hostPolicy);
@@ -287,7 +288,7 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
         return "";
     }
 
-    public async createBlob(file: Uint8Array): Promise<api.ICreateBlobResponse> {
+    public async createBlob(file: ArrayBufferLike): Promise<api.ICreateBlobResponse> {
         this.checkAttachmentPOSTUrl();
 
         const response = await getWithRetryForTokenRefresh(async (options) => {
@@ -299,7 +300,7 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
                 this.logger,
                 {
                     eventName: "createBlob",
-                    size: file.length,
+                    size: file.byteLength,
                 },
                 async (event) => {
                     const res = await this.epochTracker.fetchAndParseAsJSON<api.ICreateBlobResponse>(
@@ -375,7 +376,7 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
         // this prevents issues when generating summaries
         let documentAttributes: api.IDocumentAttributes;
         if (blob instanceof ArrayBuffer) {
-            documentAttributes = JSON.parse(IsoBuffer.from(blob).toString("utf8"));
+            documentAttributes = JSON.parse(bufferToString(blob, "utf8"));
         } else {
             documentAttributes = JSON.parse(blob.encoding === "base64" ? fromBase64ToUtf8(blob.content) : blob.content);
         }
@@ -500,7 +501,7 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
                 }
 
                 const hostSnapshotOptions = this.hostPolicy.snapshotOptions;
-                let cachedSnapshot: IOdspSnapshot | undefined;
+                let cachedSnapshot: ISnapshotCacheValue | undefined;
                 // No need to ask cache twice - if first request was unsuccessful, cache unlikely to have data on second turn.
                 if (tokenFetchOptions.refresh) {
                     cachedSnapshot = await this.fetchSnapshot(hostSnapshotOptions, undefined, tokenFetchOptions);
@@ -509,15 +510,7 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
                         this.logger,
                         { eventName: "ObtainSnapshot" },
                         async (event: PerformanceEvent) => {
-                            const cachedSnapshotP = this.epochTracker.fetchFromCache<IOdspSnapshot>(
-                                {
-                                    file: this.fileEntry,
-                                    type: "snapshot",
-                                    key: "",
-                                },
-                                this.hostPolicy.summarizerClient ? snapshotExpirySummarizerOps : undefined,
-                                "treesLatest",
-                            );
+                            const cachedSnapshotP: Promise<ISnapshotCacheValue | undefined> = this.epochTracker.get(this._snapshotCacheEntry);
 
                             let method: string;
                             if (this.hostPolicy.concurrentSnapshotFetch && !this.hostPolicy.summarizerClient) {
@@ -548,7 +541,8 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
                         });
                 }
 
-                const odspSnapshot: IOdspSnapshot = cachedSnapshot;
+                const odspSnapshot: IOdspSnapshot = cachedSnapshot.snapshot;
+                this._snapshotSequenceNumber = cachedSnapshot.sequenceNumber;
 
                 const { trees, blobs, ops } = odspSnapshot;
                 // id should be undefined in case of just ops in snapshot.
@@ -571,7 +565,7 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
                 // Clear the cache on 401/403/404 on snapshot fetch from network because this means either the user doesn't have permissions
                 // permissions for the file or it was deleted. So the user will again try to fetch from cache on any failure in future.
                 if (errorType === DriverErrorType.authorizationError || errorType === DriverErrorType.fileNotFoundOrAccessDeniedError) {
-                    await this.cache.persistedCache.removeEntries(this.fileEntry);
+                    await this.cache.persistedCache.removeEntries();
                 }
                 throw error;
             });
@@ -620,7 +614,7 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
         hostSnapshotOptions: ISnapshotOptions | undefined,
         driverSnapshotOptions: ISnapshotOptions | undefined,
         tokenFetchOptions: TokenFetchOptions,
-    ): Promise<IOdspSnapshot> {
+    ) {
         const snapshotOptions: ISnapshotOptions = driverSnapshotOptions ?? {
             deltas: 1,
             channels: 1,
@@ -660,7 +654,7 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
     private async fetchSnapshotCore(
         snapshotOptions: ISnapshotOptions,
         tokenFetchOptions: TokenFetchOptions,
-    ): Promise<IOdspSnapshot> {
+    ) {
         const storageToken = await this.getStorageToken(tokenFetchOptions, "TreesLatest");
         const url = `${this.snapshotUrl}/trees/latest?ump=1`;
         const formBoundary = uuid();
@@ -752,34 +746,24 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
             const { numTrees, numBlobs, encodedBlobsSize, decodedBlobsSize } = this.evalBlobsAndTrees(snapshot);
             const clientTime = networkTime ? overallTime - networkTime : undefined;
 
-            assert(this._snapshotCacheEntry === undefined, "snapshotCacheEntry already defined!");
-            this._snapshotCacheEntry = {
-                file: this.fileEntry,
-                type: "snapshot",
-                key: "",
-            };
-
             // There are some scenarios in ODSP where we cannot cache, trees/latest will explicitly tell us when we cannot cache using an HTTP response header.
             const canCache = response.headers.get("disablebrowsercachingofusercontent") !== "true";
             // There maybe no snapshot - TreesLatest would return just ops.
-            const seqNumber: number = (snapshot.trees && (snapshot.trees[0] as any).sequenceNumber) ?? 0;
+            const sequenceNumber: number = (snapshot.trees && (snapshot.trees[0] as any).sequenceNumber) ?? 0;
             const seqNumberFromOps = snapshot.ops && snapshot.ops.length > 0 ?
                 snapshot.ops[0].sequenceNumber - 1 :
                 undefined;
 
-            if (!Number.isInteger(seqNumber) || seqNumberFromOps !== undefined && seqNumberFromOps !== seqNumber) {
-                this.logger.sendErrorEvent({ eventName: "fetchSnapshotError", seqNumber, seqNumberFromOps });
+            const value: ISnapshotCacheValue = { snapshot, sequenceNumber };
+
+            if (!Number.isInteger(sequenceNumber) || seqNumberFromOps !== undefined && seqNumberFromOps !== sequenceNumber) {
+                this.logger.sendErrorEvent({ eventName: "fetchSnapshotError", sequenceNumber, seqNumberFromOps });
+                value.sequenceNumber = undefined;
             } else if (canCache) {
-                const cacheValue: IPersistedCacheValueWithEpoch = {
-                    value: snapshot,
-                    fluidEpoch: this.epochTracker.fluidEpoch,
-                    version: persistedCacheValueVersion,
-                };
                 this.cache.persistedCache.put(
                     this._snapshotCacheEntry,
-                    cacheValue,
-                    seqNumber,
-                );
+                    value,
+                ).catch(() => {});
             }
 
             event.end({
@@ -788,7 +772,7 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
                 leafNodes: numBlobs,
                 encodedBlobsSize,
                 decodedBlobsSize,
-                seqNumber,
+                sequenceNumber,
                 ops: snapshot.ops?.length ?? 0,
                 headers: Object.keys(headers).length !== 0 ? true : undefined,
                 redirecttime: redirectTime,
@@ -801,9 +785,12 @@ export class OdspDocumentStorageService implements IDocumentStorageService {
                 overalltime: overallTime,
                 networktime: networkTime,
                 clienttime: clientTime,
+                // Sharing link telemetry regarding sharing link redeem status and performance. Ex: FRL; dur=100, FRS; desc=S, FRP; desc=False
+                // Here, FRL is the duration taken for redeem, FRS is the redeem status (S means success), and FRP is a flag to indicate if the permission has changed.
+                sltelemetry: response.headers.get("x-fluid-sltelemetry"),
                 ...response.commonSpoHeaders,
             });
-            return snapshot;
+            return value;
         });
     }
 

@@ -21,7 +21,7 @@ import {
     SnapshotTreeEntry,
     SnapshotType,
     ICreateFileResponse,
-    ISnapshotRequest,
+    IOdspSummaryPayload,
 } from "./contracts";
 import { getUrlAndHeadersWithAuth } from "./getUrlAndHeadersWithAuth";
 import {
@@ -97,7 +97,7 @@ export async function createNewFluidFile(
             { cancel: "error" });
     });
 
-    const odspUrl = createOdspUrl(newFileInfo.siteUrl, newFileInfo.driveId, itemId, "/");
+    const odspUrl = createOdspUrl({... newFileInfo, itemId, dataStorePath: "/"});
     const resolver = new OdspDriverUrlResolver();
     return resolver.resolve({ url: odspUrl });
 }
@@ -122,7 +122,7 @@ function convertSummaryIntoContainerSnapshot(createNewSummary: ISummaryTree) {
         },
     };
     const snapshotTree = convertSummaryToSnapshotTreeForCreateNew(convertedCreateNewSummary);
-    const snapshot: ISnapshotRequest = {
+    const snapshot: IOdspSummaryPayload = {
         entries: snapshotTree.entries ?? [],
         message: "app",
         sequenceNumber: documentAttributes.sequenceNumber,

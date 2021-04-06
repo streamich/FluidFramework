@@ -14,6 +14,7 @@ import { IOdspResolvedUrl, OdspDocumentInfo, OdspFluidDataStoreLocator, SharingL
 import { createOdspCreateContainerRequest } from "./createOdspCreateContainerRequest";
 import { createOdspUrl } from "./createOdspUrl";
 import { OdspDriverUrlResolver } from "./odspDriverUrlResolver";
+import { getOdspResolvedUrl } from "./odspUtils";
 import {
     IdentityType,
     isTokenFromCache,
@@ -30,17 +31,34 @@ import { getFileLink } from "./getFileLink";
 export class OdspDriverUrlResolverForShareLink implements IUrlResolver {
     private readonly logger: ITelemetryLogger;
     private readonly sharingLinkCache = new PromiseCache<string, string>();
-    private readonly instrumentedTokenFetcher: TokenFetcher<OdspResourceTokenFetchOptions>;
+    private readonly instrumentedTokenFetcher: TokenFetcher<OdspResourceTokenFetchOptions> | undefined;
+    /**
+     * Creates url resolver instance
+     * @param tokenFetcher - Function that returns access token used to fetch share link.
+     * Can be set as 'undefined' for cases where share link is not needed. Currently, only
+     * getAbsoluteUrl() method requires share link.
+     * @param identityType - identity type for signed in user. This value determines the shape
+     * of share link as it differs for Enterprise and Consumer users
+     * @param logger - logger object that is used as telemetry sink
+     * @param appName - application name hint that is encoded with url produced by getAbsoluteUrl() method.
+     * This hint is used by link handling logic which determines which app to redirect to when user
+     * navigates directly to the link.
+     */
     public constructor(
-        tokenFetcher: TokenFetcher<OdspResourceTokenFetchOptions>,
+        tokenFetcher: TokenFetcher<OdspResourceTokenFetchOptions> | undefined = undefined,
         private readonly identityType: IdentityType = "Enterprise",
         logger?: ITelemetryBaseLogger,
         private readonly appName?: string,
     ) {
         this.logger = ChildLogger.create(logger, "OdspDriver");
-        this.instrumentedTokenFetcher = this.toInstrumentedTokenFetcher(this.logger, tokenFetcher);
+        if (tokenFetcher) {
+            this.instrumentedTokenFetcher = this.toInstrumentedTokenFetcher(this.logger, tokenFetcher);
+        }
     }
 
+    /**
+     * @deprecated - use createOdspCreateContainerRequest
+     */
     public createCreateNewRequest(
         siteUrl: string,
         driveId: string,
@@ -94,13 +112,7 @@ export class OdspDriverUrlResolverForShareLink implements IUrlResolver {
 
             const odspFluidInfo = getLocatorFromOdspUrl(url);
             if (odspFluidInfo) {
-                requestToBeResolved.url = createOdspUrl(
-                    odspFluidInfo.siteUrl,
-                    odspFluidInfo.driveId,
-                    odspFluidInfo.fileId,
-                    odspFluidInfo.dataStorePath,
-                    odspFluidInfo.containerPackageName,
-                );
+                requestToBeResolved.url = createOdspUrl(odspFluidInfo);
             }
         } catch {
             // If the locator throws some error, then try to resolve the request as it is.
@@ -138,6 +150,10 @@ export class OdspDriverUrlResolverForShareLink implements IUrlResolver {
     }
 
     private async getShareLinkPromise(resolvedUrl: IOdspResolvedUrl): Promise<string> {
+        if (this.instrumentedTokenFetcher === undefined) {
+            throw new Error("Failed to get share link because token fetcher is missing");
+        }
+
         if (!(resolvedUrl.siteUrl && resolvedUrl.driveId && resolvedUrl.itemId)) {
             throw new Error("Failed to get share link because necessary information is missing " +
                 "(e.g. siteUrl, driveId or itemId)");
@@ -150,9 +166,7 @@ export class OdspDriverUrlResolverForShareLink implements IUrlResolver {
         }
         const newLinkPromise = getFileLink(
             this.instrumentedTokenFetcher,
-            resolvedUrl.siteUrl,
-            resolvedUrl.driveId,
-            resolvedUrl.itemId,
+            resolvedUrl,
             this.identityType,
             this.logger,
         ).then((fileLink) => {
@@ -176,25 +190,27 @@ export class OdspDriverUrlResolverForShareLink implements IUrlResolver {
      */
     public async getAbsoluteUrl(
         resolvedUrl: IResolvedUrl,
-        relativeUrl: string,
+        dataStorePath: string,
         codeDetails?: IFluidCodeDetails,
     ): Promise<string> {
-        const odspResolvedUrl = resolvedUrl as IOdspResolvedUrl;
+        const odspResolvedUrl = getOdspResolvedUrl(resolvedUrl);
 
         const shareLink = await this.getShareLinkPromise(odspResolvedUrl);
 
         const shareLinkUrl = new URL(shareLink);
 
-        const packageName = isFluidPackage(codeDetails?.package) ? codeDetails?.package.name : codeDetails?.package ??
-        odspResolvedUrl.codeHint?.containerPackageName;
+        const containerPackageName =
+            isFluidPackage(codeDetails?.package) ? codeDetails?.package.name : codeDetails?.package ??
+            odspResolvedUrl.codeHint?.containerPackageName;
 
         storeLocatorInOdspUrl(shareLinkUrl, {
             siteUrl: odspResolvedUrl.siteUrl,
             driveId: odspResolvedUrl.driveId,
-            fileId: odspResolvedUrl.itemId,
-            dataStorePath: relativeUrl,
+            itemId: odspResolvedUrl.itemId,
+            dataStorePath,
             appName: this.appName,
-            containerPackageName: packageName,
+            containerPackageName,
+            fileVersion: odspResolvedUrl.fileVersion,
         });
 
         return shareLinkUrl.href;
@@ -206,12 +222,7 @@ export class OdspDriverUrlResolverForShareLink implements IUrlResolver {
     public static createDocumentUrl(baseUrl: string, driverInfo: OdspDocumentInfo) {
         const url = new URL(baseUrl);
 
-        storeLocatorInOdspUrl(url, {
-            siteUrl: driverInfo.siteUrl,
-            driveId: driverInfo.driveId,
-            fileId: driverInfo.fileId,
-            dataStorePath: driverInfo.dataStorePath,
-        });
+        storeLocatorInOdspUrl(url, driverInfo);
 
         return url.href;
     }

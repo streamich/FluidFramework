@@ -17,6 +17,7 @@ async function main() {
         .option("-id, --testId <testId>", "Load an existing data store rather than creating new")
         .option("-dbg, --debug", "Debug child processes via --inspect-brk")
         .option("-l, --log <filter>", "Filter debug logging. If not provided, uses DEBUG env variable.")
+        .option("-v, --verbose", "Enables verbose logging")
         .parse(process.argv);
 
     const driver: TestDriverTypes = commander.driver;
@@ -24,6 +25,7 @@ async function main() {
     const testId: string | undefined = commander.testId;
     const debug: true | undefined = commander.debug;
     const log: string | undefined = commander.log;
+    const verbose: true | undefined = commander.verbose;
 
     const profile = getProfile(profileArg);
 
@@ -31,12 +33,10 @@ async function main() {
         process.env.DEBUG = log;
     }
 
-    const result = await orchestratorProcess(
-        driver,
-        { ...profile, name: profileArg },
-        { testId, debug });
-
-    await safeExit(result);
+    await orchestratorProcess(
+            driver,
+            { ...profile, name: profileArg },
+            { testId, debug, verbose });
 }
 /**
  * Implementation of the orchestrator process. Returns the return code to exit the process with.
@@ -44,15 +44,17 @@ async function main() {
 async function orchestratorProcess(
     driver: TestDriverTypes,
     profile: ILoadTestConfig & { name: string },
-    args: { testId?: string, debug?: true },
-): Promise<number> {
-    const testDriver = await createTestDriver(driver);
+    args: { testId?: string, debug?: true, verbose?: true },
+) {
+    const testDriver = await createTestDriver(driver, undefined);
 
     // Create a new file if a testId wasn't provided
-    const testId = args.testId ?? await initialize(testDriver);
+    const url = args.testId !== undefined
+        ? await testDriver.createContainerUrl(args.testId)
+        : await initialize(testDriver);
 
     const estRunningTimeMin = Math.floor(2 * profile.totalSendCount / (profile.opRatePerMin * profile.numClients));
-    console.log(`Connecting to ${args.testId ? "existing" : "new"} Container targeting with testId:\n${testId }`);
+    console.log(`Connecting to ${args.testId ? "existing" : "new"} Container targeting with url:\n${url }`);
     console.log(`Selected test profile: ${profile.name}`);
     console.log(`Estimated run time: ${estRunningTimeMin} minutes\n`);
 
@@ -63,11 +65,15 @@ async function orchestratorProcess(
             "--driver", driver,
             "--profile", profile.name,
             "--runId", i.toString(),
-            "--testId", testId];
+            "--url", url];
         if (args.debug) {
             const debugPort = 9230 + i; // 9229 is the default and will be used for the root orchestrator process
             childArgs.unshift(`--inspect-brk=${debugPort}`);
         }
+        if(args.verbose) {
+            childArgs.push("--verbose");
+        }
+
         const process = child_process.spawn(
             "node",
             childArgs,
@@ -75,8 +81,11 @@ async function orchestratorProcess(
         );
         p.push(new Promise((resolve) => process.on("close", resolve)));
     }
+    try{
     await Promise.all(p);
-    return 0;
+    } finally{
+        await safeExit(0, url);
+    }
 }
 
 main().catch(
