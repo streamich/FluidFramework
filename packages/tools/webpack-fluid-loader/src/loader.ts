@@ -63,6 +63,7 @@ export interface IRouterliciousRouteOptions extends IBaseRouteOptions {
 export interface ITinyliciousRouteOptions extends IBaseRouteOptions {
     mode: "tinylicious";
     bearerSecret?: string;
+    tinyliciousPort?: number;
 }
 
 export interface IOdspRouteOptions extends IBaseRouteOptions {
