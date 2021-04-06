@@ -13,7 +13,7 @@ import { ITokenClaims } from "@fluidframework/protocol-definitions";
 import { KJUR as jsrsasign } from "jsrsasign";
 import { v4 as uuid } from "uuid";
 
-export const defaultTinyliciousPort = 3000;
+export const defaultTinyliciousPort = 7070;
 
 /**
  * InsecureTinyliciousUrlResolver knows how to get the URLs to the service (in this case Tinylicious) to use

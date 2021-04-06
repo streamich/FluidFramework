@@ -16,7 +16,7 @@ export const dockerUrls = {
     storageUrl: "http://localhost:3001",
 };
 
-const defaultTinyliciousPort = 3000;
+const defaultTinyliciousPort = 7070;
 
 export const tinyliciousUrls = (options: ITinyliciousRouteOptions) => {
     const port = options.tinyliciousPort ?? defaultTinyliciousPort;
