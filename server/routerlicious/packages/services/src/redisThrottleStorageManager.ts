@@ -30,8 +30,8 @@ export class RedisThrottleStorageManager implements IThrottleStorageManager {
     ): Promise<void> {
         const key = this.getKey(id);
 
-        const result = await this.client.hmset(key, throttlingMetric as { [key: string]: any });
-        if (result !== "OK") {
+        const result = await this.client.hset(key, throttlingMetric as { [key: string]: any });
+        if (result !== Object.keys(throttlingMetric).length) {
             return Promise.reject(result);
         }
 
