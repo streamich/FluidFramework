@@ -20,6 +20,8 @@ export class ClientManager implements IClientManager {
     }
 
     public async addClient(tenantId: string, documentId: string, clientId: string, details: IClient): Promise<void> {
+        winston.info("Logging from Test R11s Package...");
+
         const result = await this.client.hmset(this.getKey(tenantId, documentId), clientId, JSON.stringify(details));
         if (result !== "OK")
         {
